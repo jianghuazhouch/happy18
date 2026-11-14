@@ -80,9 +80,9 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   100% { transform: translate3d(-3vw, 4vh, 0) scale(.94); }
 }
 
-#stars { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+#stars { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
 
-#fx { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
+#fx { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 60; pointer-events: none; }
 
 .title-glow {
   position: fixed; z-index: 1; pointer-events: none;
@@ -1047,30 +1047,163 @@ body.ready .music-btn { opacity: 1; }
     }
   }
 
-  function firework(x, y) {
-    var col = FW[(Math.random() * FW.length) | 0];
-    var n = REDUCED ? 26 : (MOBILE ? 52 : 80);
-    for (var i = 0; i < n; i++) {
-      var a = (i / n) * 6.283 + rand(-0.06, 0.06);
-      var sp = rand(2.2, 7.6);
-      parts.push({
-        t: 's', x: x, y: y, px: x, py: y,
-        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-        g: 0.055, life: 1, decay: rand(0.008, 0.016),
-        col: col, size: rand(1.2, 2.4)
-      });
-    }
-    // 中心闪光
-    parts.push({ t: 'f', x: x, y: y, life: 1, decay: 0.06, col: col });
+  /* ---------- 烟花：单发 / 齐射 / 整场秀 ---------- */
+
+  function pick(a) { return a[(Math.random() * a.length) | 0]; }
+
+  function lighten(c, f) {
+    return [
+      Math.round(c[0] + (255 - c[0]) * f),
+      Math.round(c[1] + (255 - c[1]) * f),
+      Math.round(c[2] + (255 - c[2]) * f)
+    ];
   }
 
-  function launchFW() {
+  var PALETTES = [
+    [[255, 214, 161], [255, 236, 200]],
+    [[255, 158, 196], [255, 200, 220]],
+    [[196, 181, 253], [220, 210, 255]],
+    [[158, 240, 255], [200, 250, 255]],
+    [[255, 214, 161], [255, 158, 196], [196, 181, 253], [158, 240, 255]]
+  ];
+
+  function burst(x, y, opt) {
+    opt = opt || {};
+    var shape = opt.shape || 'peony';
+    var n = opt.n || (REDUCED ? 24 : (MOBILE ? 50 : 74));
+    if (parts.length > (MOBILE ? 700 : 1100)) n = Math.round(n * 0.55);
+    var speed = opt.speed || (MOBILE ? 5.6 : 6.6);
+    var cols = opt.colors || [FW[(Math.random() * FW.length) | 0]];
+    var grav = opt.grav != null ? opt.grav : 0.055;
+    var dec = opt.decay || rand(0.010, 0.017);
+    var size = opt.size || (MOBILE ? 1.7 : 2);
+    var i, a, sp, t, hx, hy;
+
+    for (i = 0; i < n; i++) {
+      if (shape === 'heart') {
+        t = (i / n) * 6.2832;
+        hx = 16 * Math.pow(Math.sin(t), 3);
+        hy = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+        a = Math.atan2(hy, hx);
+        sp = speed * Math.sqrt(hx * hx + hy * hy) / 16.6 * rand(0.94, 1.04);
+      } else if (shape === 'ring') {
+        a = (i / n) * 6.2832 + rand(-0.02, 0.02);
+        sp = speed * rand(0.97, 1.03);
+      } else {
+        a = (i / n) * 6.2832 + rand(-0.10, 0.10);
+        sp = speed * Math.sqrt(rand(0.05, 1));
+      }
+      parts.push({
+        t: 's',
+        x: x, y: y, px: x, py: y, qx: x, qy: y,
+        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        g: grav, life: 1, decay: dec * rand(0.8, 1.25),
+        col: lighten(cols.length > 1 ? pick(cols) : cols[0], 0.08),
+        size: size * rand(0.7, 1.2),
+        tw: Math.random() < 0.32 ? rand(9, 18) : 0
+      });
+    }
+    parts.push({
+      t: 'f', x: x, y: y, life: 1, decay: 0.07,
+      col: cols[0], r: opt.flashR || (MOBILE ? 34 : 44)
+    });
+  }
+
+  function launchRocket(opt) {
+    opt = opt || {};
     rockets.push({
-      x: rand(fxW * 0.14, fxW * 0.86),
-      y: fxH + 10,
-      vy: -rand(7.5, 10.5),
-      ty: rand(fxH * 0.12, fxH * 0.44),
-      col: FW[(Math.random() * FW.length) | 0]
+      x: opt.x != null ? opt.x : rand(fxW * 0.08, fxW * 0.92),
+      y: fxH + 8, py: fxH + 8,
+      vy: -rand(8.6, 11.6),
+      ty: opt.ty != null ? opt.ty : rand(fxH * 0.10, fxH * 0.46),
+      col: (opt.colors && opt.colors[0]) || FW[(Math.random() * FW.length) | 0],
+      burst: opt
+    });
+  }
+
+  /* 单发：蛋糕许愿、结尾预热用 */
+  function launchFW() { launchRocket({}); }
+
+  /* 整场秀：开场齐射 → 连发 → 终章大齐射 */
+  var showToken = 0, showTimers = [];
+
+  function at(delay, fn) {
+    var tok = showToken;
+    showTimers.push(setTimeout(function () { if (tok === showToken) fn(); }, delay));
+  }
+
+  function startShow() {
+    showToken++;
+    for (var i = 0; i < showTimers.length; i++) clearTimeout(showTimers[i]);
+    showTimers = [];
+
+    var W = fxW, H = fxH;
+
+    if (REDUCED) {
+      burst(W * 0.5, H * 0.34, { shape: 'heart', colors: [[255, 150, 196]], n: 36, speed: 5.4 });
+      return;
+    }
+
+    /* 1. 开场：三发同时炸开 */
+    burst(W * 0.22, H * 0.28, { shape: 'peony', colors: PALETTES[1], speed: 6.2 });
+    burst(W * 0.78, H * 0.24, { shape: 'ring', colors: PALETTES[2], speed: 6.6 });
+    burst(W * 0.50, H * 0.40, { shape: 'heart', colors: [[255, 140, 190], [255, 205, 225]], speed: 6.0, n: MOBILE ? 44 : 60 });
+    Music.sfx('boom');
+
+    /* 2. 连发：约 5 秒，平均 0.25 秒一发，时不时双发 */
+    var t = 360;
+    var shapes = ['peony', 'ring', 'peony', 'willow'];
+    var N = MOBILE ? 9 : 13;
+    for (var j = 0; j < N; j++) {
+      (function (j, delay) {
+        var shape = shapes[j % shapes.length];
+        var opt = {
+          shape: shape,
+          colors: pick(PALETTES),
+          speed: shape === 'willow' ? rand(4.6, 5.4) : rand(5.6, 6.8),
+          x: rand(W * 0.08, W * 0.92),
+          ty: rand(H * 0.10, H * 0.52)
+        };
+        if (shape === 'willow') { opt.grav = 0.032; opt.decay = 0.006; opt.size = 1.8; }
+        at(delay, function () { launchRocket(opt); });
+      })(j, t + rand(0, 90));
+
+      if (j % 4 === 3) {
+        (function (delay) {
+          var o = {
+            shape: 'peony', colors: pick(PALETTES), speed: rand(5.6, 6.6),
+            x: rand(W * 0.08, W * 0.92), ty: rand(H * 0.10, H * 0.42)
+          };
+          at(delay + 70, function () { launchRocket(o); });
+        })(t);
+      }
+      t += rand(200, 380);
+    }
+
+    /* 3. 终章：五发横铺整屏 + 两颗爱心 */
+    var fin = t + 420;
+    for (var f = 0; f < 5; f++) {
+      (function (f) {
+        at(fin + f * 90, function () {
+          burst(W * (0.12 + f * 0.19), H * rand(0.14, 0.40), {
+            shape: f % 3 === 0 ? 'ring' : 'peony',
+            colors: pick(PALETTES),
+            speed: rand(6.0, 7.4)
+          });
+        });
+      })(f);
+    }
+    at(fin + 520, function () { Music.sfx('boom'); });
+    at(fin + 780, function () {
+      for (var h = 0; h < 2; h++) {
+        (function (h) {
+          at(h * 300, function () {
+            burst(W * (0.32 + h * 0.36), H * rand(0.18, 0.30), {
+              shape: 'heart', colors: [[255, 150, 196]], speed: 5.4, n: MOBILE ? 40 : 54
+            });
+          });
+        })(h);
+      }
     });
   }
 
@@ -1081,7 +1214,7 @@ body.ready .music-btn { opacity: 1; }
         x: x + rand(-40, 40), y: y + rand(-20, 20),
         vx: rand(-1.4, 1.4), vy: -rand(1.6, 4.2),
         life: 1, decay: rand(0.004, 0.009),
-        size: rand(12, 30), ph: Math.random() * 6.28,
+        size: rand(9, 17), ph: Math.random() * 6.28,
         col: Math.random() > 0.5 ? '#ff9ec4' : '#ffd7a1'
       });
     }
@@ -1090,20 +1223,43 @@ body.ready .music-btn { opacity: 1; }
   function updateFX(dt) {
     if (!fxCtx) return;
     var ctx = fxCtx, k = dt / 16.67;
-    ctx.clearRect(0, 0, fxW, fxH);
+    var hasSpark = false;
+    for (var si = 0; si < parts.length; si++) {
+      var st = parts[si].t;
+      if (st === 's' || st === 'f') { hasSpark = true; break; }
+    }
+    if (hasSpark) {
+      // 曝光拖尾：不清屏，按比例擦除，让火花留下光带
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = 'rgba(0,0,0,0.32)';
+      ctx.fillRect(0, 0, fxW, fxH);
+      ctx.globalCompositeOperation = 'source-over';
+    } else {
+      ctx.clearRect(0, 0, fxW, fxH);
+    }
 
-    // rockets
+    // 上升的烟花弹（带拖尾）
     for (var r = rockets.length - 1; r >= 0; r--) {
       var rk = rockets[r];
+      rk.py = rk.y;
       rk.y += rk.vy * k; rk.vy += 0.07 * k;
       ctx.globalCompositeOperation = 'lighter';
-      ctx.globalAlpha = 0.9;
+      ctx.globalAlpha = 0.8;
+      ctx.strokeStyle = 'rgb(' + rk.col.join(',') + ')';
+      ctx.lineWidth = 2.4;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(rk.x, rk.y + 18 * k);
+      ctx.lineTo(rk.x, rk.y);
+      ctx.stroke();
+      ctx.globalAlpha = 0.95;
       ctx.fillStyle = 'rgb(' + rk.col.join(',') + ')';
-      ctx.beginPath(); ctx.arc(rk.x, rk.y, 2, 0, 6.283); ctx.fill();
-      ctx.globalAlpha = 0.22;
-      ctx.beginPath(); ctx.arc(rk.x, rk.y, 7, 0, 6.283); ctx.fill();
+      ctx.beginPath(); ctx.arc(rk.x, rk.y, 2.1, 0, 6.283); ctx.fill();
+      ctx.globalAlpha = 0.16;
+      ctx.beginPath(); ctx.arc(rk.x, rk.y, 10, 0, 6.283); ctx.fill();
       if (rk.y <= rk.ty || rk.vy >= 0) {
-        firework(rk.x, rk.y);
+        burst(rk.x, rk.y, rk.burst);
         rockets.splice(r, 1);
       }
     }
@@ -1129,30 +1285,34 @@ body.ready .music-btn { opacity: 1; }
         ctx.restore();
         ctx.globalCompositeOperation = 'lighter';
       } else if (p.t === 's') {
+        p.qx = p.px; p.qy = p.py;
         p.px = p.x; p.py = p.y;
         p.vy += p.g * k;
-        p.vx *= 0.988; p.vy *= 0.988;
+        p.vx *= 0.985; p.vy *= 0.985;
         p.x += p.vx * k; p.y += p.vy * k;
         p.life -= p.decay * k;
         if (p.life <= 0) { parts.splice(i, 1); continue; }
-        ctx.globalAlpha = p.life;
-        ctx.strokeStyle = 'rgba(' + p.col.join(',') + ',' + p.life + ')';
-        ctx.lineWidth = p.size;
+        var al = Math.min(1, Math.pow(p.life, 0.45));
+        if (p.tw) al *= 0.55 + 0.45 * Math.abs(Math.sin(p.life * p.tw));
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = 'rgba(' + p.col.join(',') + ',' + al + ')';
+        ctx.lineWidth = p.size * 1.15;
         ctx.lineCap = 'round';
         ctx.beginPath();
-        ctx.moveTo(p.px, p.py);
+        ctx.moveTo(p.qx, p.qy);
         ctx.lineTo(p.x, p.y);
         ctx.stroke();
       } else if (p.t === 'f') {
         p.life -= p.decay * k;
         if (p.life <= 0) { parts.splice(i, 1); continue; }
-        var rg = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 58 * (1.2 - p.life));
-        rg.addColorStop(0, 'rgba(255,255,255,' + (p.life * 0.45) + ')');
+        var fr = (p.r || 58) * (1.2 - p.life);
+        var rg = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, fr);
+        rg.addColorStop(0, 'rgba(255,255,255,' + (p.life * 0.32) + ')');
         rg.addColorStop(0.3, 'rgba(' + p.col.join(',') + ',' + (p.life * 0.34) + ')');
         rg.addColorStop(1, 'rgba(' + p.col.join(',') + ',0)');
         ctx.globalAlpha = 1;
         ctx.fillStyle = rg;
-        ctx.beginPath(); ctx.arc(p.x, p.y, 58 * (1.2 - p.life), 0, 6.283); ctx.fill();
+        ctx.beginPath(); ctx.arc(p.x, p.y, fr, 0, 6.283); ctx.fill();
       } else if (p.t === 'h') {
         p.vy -= 0.012 * k;
         p.x += p.vx * k + Math.sin(p.ph + p.life * 5) * 0.6;
@@ -1278,7 +1438,7 @@ body.ready .music-btn { opacity: 1; }
 
   /* ---------- 6. 音乐盒（WebAudio 合成，无需音频文件） ---------- */
   var Music = (function () {
-    var ac = null, master = null, bus = null, on = false, timer = null, started = false;
+    var ac = null, master = null, bus = null, on = false, timer = null, started = false, noiseBuf = null;
     var N = { G4: 392.00, A4: 440.00, B4: 493.88, C5: 523.25, D5: 587.33, E5: 659.26, F5: 698.46, G5: 783.99, A5: 880.00 };
     var MEL = [
       ['G4', .5], ['G4', .5], ['A4', 1], ['G4', 1], ['C5', 1], ['B4', 1.75], [null, .25],
@@ -1371,6 +1531,25 @@ body.ready .music-btn { opacity: 1; }
           });
         } else if (kind === 'pop') {
           tone(880, t0, 0.25, 0.10, bus);
+        } else if (kind === 'boom') {
+          if (!noiseBuf) {
+            var len = Math.floor(a.sampleRate * 0.6);
+            noiseBuf = a.createBuffer(1, len, a.sampleRate);
+            var d = noiseBuf.getChannelData(0);
+            for (var q = 0; q < len; q++) {
+              d[q] = (Math.random() * 2 - 1) * Math.pow(1 - q / len, 2.6);
+            }
+          }
+          var src = a.createBufferSource();
+          src.buffer = noiseBuf;
+          var lp = a.createBiquadFilter();
+          lp.type = 'lowpass'; lp.frequency.value = 380; lp.Q.value = 0.7;
+          var gb = a.createGain();
+          gb.gain.setValueAtTime(0.0001, t0);
+          gb.gain.exponentialRampToValueAtTime(0.18, t0 + 0.02);
+          gb.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.55);
+          src.connect(lp); lp.connect(gb); gb.connect(bus);
+          src.start(t0);
         }
       }
     };
@@ -1520,10 +1699,10 @@ body.ready .music-btn { opacity: 1; }
   });
 
   $('#heartBtn').addEventListener('click', function () {
-    var r = this.getBoundingClientRect();
-    hearts(r.left + r.width / 2, r.top, 24);
-    if (!REDUCED) { launchFW(); setTimeout(launchFW, 260); setTimeout(launchFW, 520); }
-    Music.sfx('pop');
+    startShow();
+    var label = this.querySelectorAll('span')[1];
+    if (label) label.textContent = '再来一场烟花';
+    this.classList.add('fired');
   });
 
   $('#replayBtn').addEventListener('click', function () {
